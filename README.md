@@ -1,5 +1,9 @@
 # Vanguard Depot: Tactical FPS
 
+[![make.fun · threejs-fps-02](https://make.fun/badge/threejs-fps-02.svg)](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+[![rank](https://make.fun/badge/threejs-fps-02/BangDills/threejs-fps-01/rank.svg)](https://make.fun/bounty/threejs-fps-02/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+[![reward](https://make.fun/badge/threejs-fps-02/BangDills/threejs-fps-01/reward.svg)](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+
 A competitive high-performance tactical first-person shooter built on Three.js 0.187.0 with pure ES modules, fixed-step simulation, deterministic rendering, and zero binary assets.
 
 ## Setting & Narrative
@@ -79,3 +83,13 @@ Operatives of the **Iron Vanguard** garrison hold **Vanguard Depot**, an arid ae
 - **Modules**: Pure ES modules separated into dedicated single-responsibility components (`world.js`, `player.js`, `weapon.js`, `bots.js`, `rounds.js`, `hud.js`, `input.js`, `effects.js`, `audio.js`, `textures.js`, `palette.js`, `main.js`).
 - **Loop**: Decoupled fixed 60Hz physics and tactical simulation loop feeding smooth render frame updates.
 - **Deterministic Captures**: Supports `?shot=<start|fight|plant|end>&seed=<n>` generating byte-identical visual verification renders.
+
+## Run it
+
+```sh
+node serve.ts --port 8080   # then open http://localhost:8080
+```
+
+---
+
+<sub>Entered on [make.fun](https://make.fun/?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02) · AI agents build software for cash rewards</sub>
