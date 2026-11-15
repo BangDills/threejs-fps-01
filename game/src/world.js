@@ -2,6 +2,7 @@
 // Generates an industrial aerospace logistics depot with daylight lighting (mean luma 70-95).
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
+import { connectWalkableWaypoints } from './navigation.js';
 import {
   createFloorTexture,
   createWallTexture,
@@ -317,6 +318,84 @@ export function createWorld(scene) {
     { id: 26, pos: new THREE.Vector3(0, 0.9, 24), links: [23, 24, 25], tag: 'spawn_atk' },
   ];
 
+  connectWalkableWaypoints(waypoints, colliders);
+
+  // 11. Pulse Disruptor Device Mesh (Planted in Site A or B)
+  const deviceGroup = new THREE.Group();
+  deviceGroup.name = 'pulse_disruptor';
+
+  // Case body
+  const caseGeo = new THREE.BoxGeometry(0.65, 0.22, 0.44);
+  const caseMat = new THREE.MeshLambertMaterial({ color: 0x1f2630 });
+  const caseMesh = new THREE.Mesh(caseGeo, caseMat);
+  caseMesh.position.y = 0.11;
+  caseMesh.castShadow = true;
+  caseMesh.receiveShadow = true;
+  deviceGroup.add(caseMesh);
+
+  // Digital countdown screen
+  const screenGeo = new THREE.PlaneGeometry(0.32, 0.18);
+  const screenMat = new THREE.MeshBasicMaterial({ color: 0x00e5ff });
+  const screenMesh = new THREE.Mesh(screenGeo, screenMat);
+  screenMesh.rotation.x = -Math.PI / 2;
+  screenMesh.position.set(0, 0.225, 0.04);
+  deviceGroup.add(screenMesh);
+
+  // Energy core cylindrical conduits
+  const conduitGeo = new THREE.CylinderGeometry(0.045, 0.045, 0.46, 8);
+  const conduitMat = new THREE.MeshLambertMaterial({ color: 0xff3b30, emissive: 0x881111 });
+  const conduit1 = new THREE.Mesh(conduitGeo, conduitMat);
+  conduit1.rotation.x = Math.PI / 2;
+  conduit1.position.set(-0.24, 0.11, 0);
+  deviceGroup.add(conduit1);
+
+  const conduit2 = new THREE.Mesh(conduitGeo, conduitMat);
+  conduit2.rotation.x = Math.PI / 2;
+  conduit2.position.set(0.24, 0.11, 0);
+  deviceGroup.add(conduit2);
+
+  // Antenna
+  const antGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.38, 6);
+  const antMat = new THREE.MeshLambertMaterial({ color: 0x7a8a9a });
+  const antMesh = new THREE.Mesh(antGeo, antMat);
+  antMesh.position.set(0.18, 0.36, -0.12);
+  deviceGroup.add(antMesh);
+
+  // Blinking pulsing beacon light
+  const deviceLight = new THREE.PointLight(0xff3b30, 2.5, 9);
+  deviceLight.position.set(0, 0.45, 0);
+  deviceGroup.add(deviceLight);
+
+  deviceGroup.visible = false;
+  scene.add(deviceGroup);
+
+  function setPlantedDevice(pos, site) {
+    let targetX = pos.x;
+    let targetZ = pos.z;
+    const targetY = 0.25;
+
+    // Avoid clipping with central pillars
+    if (site === 'A') {
+      if (Math.abs(targetX - siteAPos.x) < 1.2 && Math.abs(targetZ - siteAPos.z) < 1.2) {
+        targetX = siteAPos.x + 0.9;
+        targetZ = siteAPos.z + 1.1;
+      }
+    } else if (site === 'B') {
+      if (Math.abs(targetX - siteBPos.x) < 1.2 && Math.abs(targetZ - siteBPos.z) < 1.2) {
+        targetX = siteBPos.x - 0.9;
+        targetZ = siteBPos.z + 1.1;
+      }
+    }
+
+    deviceGroup.position.set(targetX, targetY, targetZ);
+    deviceGroup.visible = true;
+    return deviceGroup.position;
+  }
+
+  function clearPlantedDevice() {
+    deviceGroup.visible = false;
+  }
+
   return {
     colliders,
     shootables,
@@ -325,5 +404,36 @@ export function createWorld(scene) {
     siteB: siteBPos,
     defSpawn: new THREE.Vector3(0, 0.9, -24),
     atkSpawn: new THREE.Vector3(0, 0.9, 24),
+    deviceMesh: deviceGroup,
+    setPlantedDevice,
+    clearPlantedDevice,
   };
+}
+
+/**
+ * Creates a compact backpack carrier device mesh for the designated spike carrier.
+ * @returns {THREE.Group}
+ */
+export function createCarrierDeviceMesh() {
+  const g = new THREE.Group();
+  const packGeo = new THREE.BoxGeometry(0.38, 0.46, 0.16);
+  const packMat = new THREE.MeshLambertMaterial({ color: 0x1f2630 });
+  const pack = new THREE.Mesh(packGeo, packMat);
+  g.add(pack);
+
+  // Glowing status light
+  const ledGeo = new THREE.BoxGeometry(0.12, 0.08, 0.04);
+  const ledMat = new THREE.MeshBasicMaterial({ color: 0xff3b30 });
+  const led = new THREE.Mesh(ledGeo, ledMat);
+  led.position.set(0, 0.12, 0.09);
+  g.add(led);
+
+  // Hazard stripe accents
+  const stripGeo = new THREE.BoxGeometry(0.34, 0.04, 0.17);
+  const stripMat = new THREE.MeshBasicMaterial({ color: 0xffaa22 });
+  const strip = new THREE.Mesh(stripGeo, stripMat);
+  strip.position.set(0, -0.08, 0);
+  g.add(strip);
+
+  return g;
 }

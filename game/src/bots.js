@@ -2,10 +2,19 @@
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { playGunshot } from './audio.js';
+import { computeRoute, SITE_WAYPOINTS } from './navigation.js';
+import { createCarrierDeviceMesh } from './world.js';
 
 export function createBots(scene, world, effects, prng = Math.random) {
   const bots = [];
   const hitMeshes = [];
+
+  function createCarrierPack() {
+    const pack = createCarrierDeviceMesh();
+    pack.position.set(0, 1.25, 0.23);
+    pack.scale.setScalar(0.7);
+    return pack;
+  }
 
   // Shared operative geometries & materials
   const headGeo = new THREE.BoxGeometry(0.32, 0.32, 0.32);
@@ -95,6 +104,9 @@ export function createBots(scene, world, effects, prng = Math.random) {
     gunMesh.position.set(0.24, 1.0, -0.35);
     group.add(gunMesh);
 
+    const carrierDevice = cfg.role === 'carrier' ? createCarrierPack() : null;
+    if (carrierDevice) group.add(carrierDevice);
+
     scene.add(group);
 
     const startWp = world.waypoints[cfg.wpRoute[0]] || world.waypoints[0];
@@ -122,6 +134,11 @@ export function createBots(scene, world, effects, prng = Math.random) {
       fireCooldown: prng() * 0.4,
       reactionTimer: 0,
       speed: 3.8,
+      hasDevice: cfg.role === 'carrier',
+      deviceMesh: carrierDevice,
+      baseRoute: [...cfg.wpRoute],
+      routeObjective: false,
+      route: [...cfg.wpRoute],
     });
   }
 
@@ -131,6 +148,57 @@ export function createBots(scene, world, effects, prng = Math.random) {
   const _botDir = new THREE.Vector3();
   const _targetEye = new THREE.Vector3();
   const _muzzlePos = new THREE.Vector3();
+
+  function assignCarrier() {
+    return bots.find((b) => b.team === 1 && b.role === 'carrier')?.id ?? 5;
+  }
+
+  function setObjective(site, carrierId) {
+    for (const b of bots) {
+      b.hasDevice = b.id === carrierId && !site ? true : b.id === carrierId;
+      b.routeObjective = Boolean(site);
+      if (!site) {
+        b.route = [...b.baseRoute];
+        b.wpIndex = 0;
+        continue;
+      }
+      if (b.team === 1) {
+        const flank = b.role === 'flank_b' || b.role === 'support_b';
+        const targetSite = b.id === carrierId ? site : (flank ? (site === 'A' ? 'B' : 'A') : site);
+        const startId = findWaypointId(b.position);
+        b.route = computeRoute(world.waypoints, startId, SITE_WAYPOINTS[targetSite]);
+      } else {
+        const hold = b.role === 'anchor_a' ? SITE_WAYPOINTS.A
+          : b.role === 'anchor_b' ? SITE_WAYPOINTS.B
+            : findWaypointId(b.position);
+        b.route = computeRoute(world.waypoints, findWaypointId(b.position), hold);
+      }
+      b.wpIndex = b.route.length > 1 ? 1 : 0;
+    }
+  }
+
+  function findWaypointId(pos) {
+    let id = 0;
+    let best = Infinity;
+    for (const wp of world.waypoints) {
+      const dx = wp.pos.x - pos.x;
+      const dz = wp.pos.z - pos.z;
+      const d = dx * dx + dz * dz;
+      if (d < best) { best = d; id = wp.id; }
+    }
+    return id;
+  }
+
+  function onDevicePlanted(site, pos) {
+    for (const b of bots) {
+      if (b.team !== 0 || !b.alive) continue;
+      const goal = b.role === 'anchor_a' ? SITE_WAYPOINTS.A
+        : b.role === 'anchor_b' ? SITE_WAYPOINTS.B : findWaypointId(pos);
+      b.route = computeRoute(world.waypoints, findWaypointId(b.position), goal);
+      b.wpIndex = b.route.length > 1 ? 1 : 0;
+      b.routeObjective = true;
+    }
+  }
 
   function reset(siteChoice = 'A') {
     for (const b of bots) {
@@ -143,8 +211,12 @@ export function createBots(scene, world, effects, prng = Math.random) {
       b.fireCooldown = prng() * 0.5;
       b.wpIndex = 0;
       b.group.visible = true;
+      b.route = [...b.baseRoute];
+      b.routeObjective = false;
+      b.hasDevice = b.role === 'carrier';
+      if (b.deviceMesh) b.deviceMesh.visible = b.hasDevice;
 
-      // Adjust route based on site choice for attackers
+      // Adjust role routes around the selected objective.
       if (b.team === 1) {
         if (siteChoice === 'A') {
           if (b.role === 'carrier') b.wpRoute = [26, 23, 17, 12, 5];
@@ -157,6 +229,10 @@ export function createBots(scene, world, effects, prng = Math.random) {
         }
       }
 
+      b.routeObjective = false;
+      b.route = [...b.baseRoute];
+      b.hasDevice = b.role === 'carrier';
+      if (b.deviceMesh) b.deviceMesh.visible = b.hasDevice;
       const wp = world.waypoints[b.wpRoute[0]];
       if (wp) {
         b.group.position.copy(wp.pos);
@@ -221,7 +297,7 @@ export function createBots(scene, world, effects, prng = Math.random) {
   }
 
   // Bot simulation step
-  function step(dt, player, shootables, onKill) {
+  function step(dt, player, shootables, onKill, onPlant) {
     for (let i = 0; i < bots.length; i++) {
       const b = bots[i];
       if (!b.alive) continue;
@@ -328,20 +404,28 @@ export function createBots(scene, world, effects, prng = Math.random) {
         b.state = 'patrol';
         b.trackingTime = 0;
 
-        if (b.wpRoute.length > 0) {
-          const targetWp = world.waypoints[b.wpRoute[b.wpIndex]];
-          if (targetWp) {
-            const toWp = new THREE.Vector3().subVectors(targetWp.pos, b.position);
-            toWp.y = 0;
-            const dist = toWp.length();
-            if (dist < 1.2) {
-              b.wpIndex = (b.wpIndex + 1) % b.wpRoute.length;
-            } else {
-              toWp.normalize();
-              b.position.addScaledVector(toWp, b.speed * dt);
-              b.yaw = Math.atan2(-toWp.x, -toWp.z);
-              b.group.rotation.y = b.yaw;
+        const targetRoute = b.routeObjective ? b.route : b.wpRoute;
+        const targetWp = world.waypoints[targetRoute[b.wpIndex]];
+        if (targetWp) {
+          const toWp = new THREE.Vector3().subVectors(targetWp.pos, b.position);
+          toWp.y = 0;
+          const dist = toWp.length();
+          if (dist < 1.2) {
+            if (b.wpIndex < targetRoute.length - 1) {
+              b.wpIndex++;
+            } else if (b.hasDevice && b.routeObjective) {
+              const site = targetWp.id === SITE_WAYPOINTS.A ? 'A'
+                : targetWp.id === SITE_WAYPOINTS.B ? 'B' : null;
+              if (site && onPlant?.(site, b.position) === true) {
+                b.hasDevice = false;
+                if (b.deviceMesh) b.deviceMesh.visible = false;
+              }
             }
+          } else {
+            toWp.normalize();
+            b.position.addScaledVector(toWp, b.speed * dt);
+            b.yaw = Math.atan2(-toWp.x, -toWp.z);
+            b.group.rotation.y = b.yaw;
           }
         }
       }
@@ -352,6 +436,9 @@ export function createBots(scene, world, effects, prng = Math.random) {
     bots,
     hitMeshes,
     reset,
+    assignCarrier,
+    setObjective,
+    onDevicePlanted,
     damage,
     getAlive,
     step,

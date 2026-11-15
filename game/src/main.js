@@ -73,6 +73,7 @@ hud.updateAmmo(weapon.mag, weapon.reserve, weapon.current.name, weapon.current.m
 hud.updateScores(0, 0);
 hud.setCredits(rounds.money);
 hud.updateScoreboard(rounds.stats);
+rounds.startRound(player, bots, weapon);
 
 function onLockChange(locked) {
   if (shot) return;
@@ -107,7 +108,7 @@ function syncCamera() {
 }
 
 function shoot() {
-  if (!weapon.ready()) return false;
+  if (rounds.phase !== ROUND_PHASE.ACTION || !weapon.ready()) return false;
   if (!weapon.pullTrigger()) return false;
 
   const muzzlePos = weapon.getMuzzlePosition();
@@ -163,7 +164,20 @@ function shoot() {
 }
 
 function handleInput() {
-  if (buyMenuOpen) return;
+  if (buyMenuOpen && rounds.phase !== ROUND_PHASE.BUY) {
+    buyMenuOpen = false;
+    hud.closeBuyMenu();
+  }
+  if (buyMenuOpen) {
+    if (input.state.keys.has('KeyB') || input.state.keys.has('Escape')) {
+      input.state.keys.delete('KeyB');
+      input.state.keys.delete('Escape');
+      buyMenuOpen = false;
+      hud.closeBuyMenu();
+    }
+    input.takeLook();
+    return;
+  }
 
   const look = input.takeLook();
   player.look(look.x, look.y);
@@ -174,7 +188,7 @@ function handleInput() {
 
   // Tactical key toggles
   if (input.state.keys.has('KeyR')) weapon.reload();
-  if (input.state.keys.has('KeyB')) {
+  if (input.state.keys.has('KeyB') && rounds.phase === ROUND_PHASE.BUY) {
     input.state.keys.delete('KeyB');
     buyMenuOpen = !buyMenuOpen;
     if (buyMenuOpen) {
@@ -195,28 +209,23 @@ function handleInput() {
   if (input.state.keys.has('Digit2')) weapon.switchWeapon('arc9');
   if (input.state.keys.has('Digit3')) weapon.switchWeapon('stinger');
 
-  // Objective interact key (Plant / Defuse)
-  if (input.state.keys.has('KeyE')) {
-    if (rounds.isPlanted) {
-      const dist = player.state.position.distanceTo(rounds.plantPosition);
-      if (dist < 3.2) {
-        rounds.defuseDisruptor();
-      }
-    } else {
-      const site = rounds.checkObjectivePlant(player.state.position);
-      if (site) {
-        rounds.plantDisruptor(site, player.state.position);
-      }
-    }
+  // Objective interaction is held continuously by the player.
+  if (rounds.isPlanted) {
+    const dist = player.state.position.distanceTo(rounds.plantPosition);
+    player.state.defusing = input.state.keys.has('KeyE') && dist < 3.2;
+  } else {
+    player.state.defusing = false;
   }
 }
 
 function step(dt) {
   player.step(dt, input.state.keys);
   weapon.step(dt, input.state.ads);
-  bots.step(dt, player, world.shootables, (killer, victim, gun, hs, kt, vt) => {
-    rounds.registerKill(killer, victim, gun, hs, kt, vt);
-  });
+  if (rounds.phase === ROUND_PHASE.ACTION) {
+    bots.step(dt, player, world.shootables, (killer, victim, gun, hs, kt, vt) => {
+      rounds.registerKill(killer, victim, gun, hs, kt, vt);
+    }, (site, position) => rounds.plantDisruptor(site, position));
+  }
   effects.step(dt);
   rounds.step(dt, player, bots, weapon);
 
@@ -340,8 +349,14 @@ function runShot(name) {
     player.state.pitch = -0.16;
     weapon.switchWeapon('valkyrie');
 
-    const sitePos = new THREE.Vector3(-23, 0.25, -10);
+    const sitePos = new THREE.Vector3(-23, 0, -10);
+    rounds.startRound(player, bots, weapon);
+    rounds.forceActionForShot();
+    const carrier = bots.bots.find((item) => item.role === 'carrier');
+    carrier.position.copy(sitePos);
     rounds.plantDisruptor('A', sitePos);
+    player.reset(new THREE.Vector3(-20.5, 0.25, -6.5), 0.22);
+    player.state.pitch = -0.32;
 
     // Position approaching bot holding angle
     const bot = bots.bots.find((b) => b.id === 6);
@@ -355,7 +370,6 @@ function runShot(name) {
     settle(20);
 
     hud.updateScores(3, 2);
-    hud.updateTimer(64);
     hud.showObjectiveBar('DISRUPTOR ARMED AT SITE A');
     hud.setObjectiveProgress(0.72);
     hud.updateVitals(100, 100);

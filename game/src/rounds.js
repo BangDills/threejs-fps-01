@@ -2,6 +2,9 @@
 import * as THREE from 'three';
 import { playObjectiveBeep } from './audio.js';
 
+export const BOMB_FUSE_SECONDS = 40;
+export const DEFUSE_SECONDS = 5;
+
 export const ROUND_PHASE = {
   BUY: 'BUY_PHASE',
   ACTION: 'ACTION_PHASE',
@@ -22,10 +25,13 @@ export function createRounds(world, hud) {
   // Objective state
   let isPlanted = false;
   let plantSite = null;
-  let plantTimer = 40.0;
+  let plantTimer = BOMB_FUSE_SECONDS;
   let isDefused = false;
   let plantProgress = 0;
   let defuseProgress = 0;
+  let carrierId = null;
+  let activeBots = null;
+  let attackingSite = 'A';
   const plantPosition = new THREE.Vector3();
 
   // Player & bot economy
@@ -56,15 +62,21 @@ export function createRounds(world, hud) {
     roundClock = 100.0;
     isPlanted = false;
     plantSite = null;
-    plantTimer = 40.0;
+    plantTimer = BOMB_FUSE_SECONDS;
     isDefused = false;
     plantProgress = 0;
     defuseProgress = 0;
+    hud.setDefuseProgress(0, false);
+    carrierId = bots.assignCarrier ? bots.assignCarrier() : 5;
+    activeBots = bots;
+    attackingSite = roundNumber % 2 === 0 ? 'B' : 'A';
+    if (world.clearPlantedDevice) world.clearPlantedDevice();
     beepCooldown = 1.0;
 
     // Reset player & bots to spawns
     player.reset(world.defSpawn, 0);
-    bots.reset('A');
+    bots.reset(attackingSite);
+    if (bots.setObjective) bots.setObjective(attackingSite, carrierId);
     weapon.refill();
 
     hud.updateScores(scoreDef, scoreAtk);
@@ -102,22 +114,49 @@ export function createRounds(world, hud) {
   }
 
   function plantDisruptor(site, pos) {
-    if (isPlanted) return;
+    const bot = activeBots?.bots.find((item) => item.id === carrierId);
+    const validSite = bot && bot.alive && bot.hasDevice ? checkObjectivePlant(bot.position) : null;
+    if (isPlanted || phase !== ROUND_PHASE.ACTION || validSite !== site || site !== attackingSite) return false;
     isPlanted = true;
+    site = validSite;
     plantSite = site;
-    plantTimer = 40.0;
-    plantPosition.copy(pos);
+    const actualPosition = world.setPlantedDevice
+      ? world.setPlantedDevice(bot.position, site)
+      : bot.position;
+    plantPosition.copy(actualPosition ?? bot.position);
+    plantTimer = BOMB_FUSE_SECONDS;
+    bot.hasDevice = false;
+    if (bot.deviceMesh) bot.deviceMesh.visible = false;
+    plantProgress = 0;
+    defuseProgress = 0;
+    if (activeBots?.onDevicePlanted) activeBots.onDevicePlanted(site, plantPosition);
     hud.showObjectiveBar(`DISRUPTOR ARMED AT SITE ${site}`);
+    hud.setObjectiveProgress(1);
+    hud.updatePhase('DEVICE ARMED');
+    return true;
   }
 
-  function defuseDisruptor() {
-    if (!isPlanted || isDefused) return;
+  function tickDefuse(dt, active) {
+    if (!isPlanted || isDefused) return false;
+    defuseProgress = active ? Math.min(DEFUSE_SECONDS, defuseProgress + dt) : 0;
+    hud.setDefuseProgress(defuseProgress / DEFUSE_SECONDS, active);
+    if (defuseProgress + 1e-6 < DEFUSE_SECONDS) return false;
     isDefused = true;
+    return true;
+  }
+
+  function forceActionForShot() {
+    phase = ROUND_PHASE.ACTION;
+    phaseTimer = 0;
+    hud.updatePhase('ACTION');
+    hud.closeBuyMenu();
   }
 
   function decideRound(winnerTeam, reasonText) {
     phase = ROUND_PHASE.DECIDED;
     phaseTimer = 5.0;
+    hud.setDefuseProgress(0, false);
+    if (world.clearPlantedDevice) world.clearPlantedDevice();
 
     let reward = 0;
     if (winnerTeam === 0) {
@@ -158,13 +197,19 @@ export function createRounds(world, hud) {
 
     if (phase === ROUND_PHASE.ACTION) {
       roundClock -= dt;
-      hud.updateTimer(roundClock);
+      if (isPlanted) {
+        const inRange = player.state.position.distanceTo(plantPosition) < 3.2;
+        tickDefuse(dt, player.state.alive && inRange && Boolean(player.state.defusing));
+      } else {
+        hud.updateTimer(roundClock);
+      }
 
       // Objective plant countdown
       if (isPlanted) {
         plantTimer -= dt;
-        const progress = Math.max(0, plantTimer / 40.0);
+        const progress = Math.max(0, plantTimer / BOMB_FUSE_SECONDS);
         hud.setObjectiveProgress(progress);
+        hud.updateTimer(plantTimer, true);
 
         // Beep frequency increases as timer runs out
         beepCooldown -= dt;
@@ -181,7 +226,7 @@ export function createRounds(world, hud) {
         }
 
         if (isDefused) {
-          // Defenders win via defusal
+          if (world.clearPlantedDevice) world.clearPlantedDevice();
           decideRound(0, 'DISRUPTOR DEFUSED - SITE SECURED');
           return;
         }
@@ -191,13 +236,9 @@ export function createRounds(world, hud) {
       const defAlive = (player.state.alive ? 1 : 0) + bots.getAlive(0).length;
       const atkAlive = bots.getAlive(1).length;
 
-      if (atkAlive === 0) {
-        if (isPlanted) {
-          // Disruptor must still be defused!
-        } else {
-          decideRound(0, 'ALL HOSTILE BREACH UNITS ELIMINATED');
-          return;
-        }
+      if (atkAlive === 0 && !isPlanted) {
+        decideRound(0, 'ALL HOSTILE BREACH UNITS ELIMINATED');
+        return;
       }
 
       if (defAlive === 0) {
@@ -221,6 +262,7 @@ export function createRounds(world, hud) {
   }
 
   function buyItem(itemKey, player, weapon) {
+    if (phase !== ROUND_PHASE.BUY) return false;
     const costs = {
       arc9: 0,
       stinger: 1500,
@@ -260,7 +302,7 @@ export function createRounds(world, hud) {
     registerKill,
     checkObjectivePlant,
     plantDisruptor,
-    defuseDisruptor,
+    forceActionForShot,
     decideRound,
     buyItem,
     step,

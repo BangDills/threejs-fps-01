@@ -31,6 +31,9 @@ export function createHud() {
   const hudObjBar = document.getElementById('hud-objective-bar');
   const objTitle = document.getElementById('obj-title');
   const objProgressFill = document.getElementById('obj-progress-fill');
+  const defuseBar = document.getElementById('hud-defuse-bar');
+  const defuseTitle = document.getElementById('defuse-title');
+  const defuseProgressFill = document.getElementById('defuse-progress-fill');
 
   const roundBanner = document.getElementById('round-banner');
   const bannerHeadline = document.getElementById('banner-headline');
@@ -90,12 +93,13 @@ export function createHud() {
     if (gearSmoke) gearSmoke.className = smoke > 0 ? 'gear-icon ready' : 'gear-icon';
   }
 
-  function updateTimer(seconds) {
+  function updateTimer(seconds, isPlanted = false) {
     if (!roundTimer) return;
     const s = Math.max(0, Math.floor(seconds));
     const m = Math.floor(s / 60);
     const rem = s % 60;
     roundTimer.textContent = `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
+    roundTimer.style.color = isPlanted ? '#ff3b30' : '#ffffff';
   }
 
   function updateScores(def, atk) {
@@ -140,6 +144,13 @@ export function createHud() {
     if (objProgressFill) {
       objProgressFill.style.width = `${Math.max(0, Math.min(100, ratio * 100))}%`;
     }
+  }
+
+  function setDefuseProgress(ratio, active) {
+    if (!defuseBar) return;
+    defuseBar.classList.toggle('visible', active);
+    if (defuseTitle) defuseTitle.textContent = active ? 'DEFUSING DISRUPTOR' : 'HOLD E TO DEFUSE';
+    if (defuseProgressFill) defuseProgressFill.style.width = `${Math.max(0, Math.min(100, ratio * 100))}%`;
   }
 
   function hideObjectiveBar() {
@@ -313,6 +324,7 @@ export function createHud() {
     addKill,
     showObjectiveBar,
     setObjectiveProgress,
+    setDefuseProgress,
     hideObjectiveBar,
     showBanner,
     hideBanner,
